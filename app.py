@@ -1,66 +1,86 @@
-import os
-from flask import Flask, render_template, request, jsonify
-import joblib
 import numpy as np
 import tensorflow as tf
-from flask_cors import CORS  # Import CORS
-from waitress import serve
-import pandas as pd
-from scipy.signal import find_peaks
+from sklearn.cluster import KMeans
+import joblib  # For loading the KMeans model
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for the whole app
-
-# Load model and kmeans
-model = tf.keras.models.load_model("kmeans_model.keras")
-kmeans = joblib.load("kmeans_model.pkl")
-
-def load_and_preprocess(heartbeat_signal):
-    """Convert input data to the required format"""
-    df = pd.DataFrame({'MLII': heartbeat_signal})
-    peaks, _ = find_peaks(df["MLII"], distance=150)
-    heartbeats = []
-    for peak in peaks:
-        start = max(0, peak - 150)
-        end = min(len(df), peak + 150)
-        heartbeat = df["MLII"][start:end].values
-        if len(heartbeat) == 300:
-            heartbeats.append(heartbeat)
-    heartbeats = np.array(heartbeats).reshape(-1, 300, 1)
-    return heartbeats
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-@app.route('/predict', methods=['POST'])
-def predict():
+# Load the KMeans model
+def load_kmeans_model(model_path):
+    """
+    Load the KMeans model from the specified path.
+    """
     try:
-        data = request.get_json()
-        heartbeat_signal = data.get("heartbeat_signal", None)
-
-        if heartbeat_signal is None:
-            return jsonify({"error": "No input data provided"}), 400
-
-        heartbeats = load_and_preprocess(heartbeat_signal)
-
-        if heartbeats.size == 0:
-            return jsonify({"error": "No heartbeats detected"}), 400
-
-        embeddings = model.predict(heartbeats)
-        prediction = kmeans.predict(embeddings).tolist() #needs to be a list for json serialization.
-
-        return jsonify({"prediction": prediction}), 200
-
+        kmeans = joblib.load(model_path)
+        print("KMeans model loaded successfully.")
+        return kmeans
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error loading KMeans model: {e}")
+        return None
 
-if __name__ == '__main__':
-    port = os.environ.get("PORT", 80)  # Default to 80 for Render deployment
+# Load the TensorFlow/Keras model
+def load_tf_model(model_path):
+    """
+    Load the TensorFlow/Keras model from the specified path.
+    """
     try:
-        port = int(port)
-    except ValueError:
-        port = 80  # Default to 80 for Render
+        model = tf.keras.models.load_model(model_path)
+        print("TensorFlow/Keras model loaded successfully.")
+        return model
+    except Exception as e:
+        print(f"Error loading TensorFlow/Keras model: {e}")
+        return None
 
-    # Start server with Waitress
-    serve(app, host="0.0.0.0", port=port)
+# Preprocess input data (example function, adjust as needed)
+def preprocess_input(data):
+    """
+    Preprocess the input data to match the model's expected input format.
+    """
+    # Example: Reshape and normalize the data
+    data = np.array(data).reshape(-1, 300, 1)  # Reshape to (batch_size, 300, 1)
+    data = data / np.max(data)  # Normalize (example)
+    return data
+
+# Run inference using the loaded models
+def run_inference(input_data, tf_model, kmeans_model):
+    """
+    Run inference using the TensorFlow/Keras model and KMeans model.
+    """
+    # Preprocess the input data
+    processed_data = preprocess_input(input_data)
+
+    # Get embeddings from the TensorFlow/Keras model
+    embeddings = tf_model.predict(processed_data)
+
+    # Use the KMeans model to predict clusters
+    clusters = kmeans_model.predict(embeddings)
+
+    return clusters
+
+# Main function
+def main():
+    # Paths to the saved models
+    tf_model_path = "classification_head.keras"  # Replace with your TensorFlow model path
+    kmeans_model_path = "kmeans_model.keras"  # Replace with your KMeans model path
+
+    # Load the models
+    tf_model = load_tf_model(tf_model_path)
+    kmeans_model = load_kmeans_model(kmeans_model_path)
+
+    if tf_model is None or kmeans_model is None:
+        print("Failed to load models. Exiting.")
+        return
+
+    # Example input data (replace with your actual data)
+    # This should be a list of heartbeats, each of shape (300,)
+    input_data = [
+        np.random.rand(300).tolist(),  # Example heartbeat 1
+        np.random.rand(300).tolist(),  # Example heartbeat 2
+    ]
+
+    # Run inference
+    clusters = run_inference(input_data, tf_model, kmeans_model)
+
+    # Print the results
+    print("Predicted Clusters:", clusters)
+
+if __name__ == "__main__":
+    main()
